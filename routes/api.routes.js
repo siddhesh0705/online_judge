@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { submitProblem, updateSubmissionStatus } = require('../controllers/submit.controller.js');
+const { submitProblem, updateSubmissionStatus } = require('../controllers/runSubmit.controller.js');
 const { registerUser, loginUser, logoutUser } = require('../controllers/auth.controller.js');
 const { body } = require('express-validator');
 const authMiddleware = require('../middleware/auth.middleware.js');

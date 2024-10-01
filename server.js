@@ -1,13 +1,16 @@
 const express = require("express");
+const http = require("http"); // Import the http module to create a server
 const cookieParser = require("cookie-parser");
 const helmet = require("helmet"); // For setting secure HTTP headers
 const rateLimit = require("express-rate-limit");
+// const socketIo = require("socket.io"); // Add socket.io
 const db = require("./config/db.config.js");
 const bodyParser = require("body-parser");
 const Problem = require('./models/problem.model.js');
 const Submission = require('./models/submission.model.js');
 require("dotenv").config();
-            
+const { startCleanupJob } = require('./jobs/clean.jobs.js');
+
 const app = express();
 
 const apiRoutes = require('./routes/api.routes.js');
@@ -37,12 +40,13 @@ const initApp = async () => {
         console.error("Unable to connect to the database:", error.original);
     }
 };
-
 initApp();
+
+startCleanupJob();
 
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
 
