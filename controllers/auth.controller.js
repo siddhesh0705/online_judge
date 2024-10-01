@@ -35,20 +35,20 @@ const login = async (req, res) => {
     if(!checkUser){
         return res.status(400).json({ message: 'Email does not exist' });
     }
-
+    
     const comparePassword = await bcrypt.compare(password , checkUser.password );
     if(!comparePassword){
         return res.status(400).json({ message: 'Wrong Password' });
     }
 
-    let token = jwt.sign({email},"secret"); // secret key shouldnt be leaked
-    res.cookie("token",token);
+    let token = jwt.sign({email},process.env.JWT_SECRET); // secret key shouldnt be leaked
+    res.cookie("token",token,{ httpOnly: true, secure: process.env.NODE_ENV === 'production' });
     res.status(200).json({message : 'Login Successful'});
 }; 
 
 
 const logout = (req , res) => {
-    res.cookie("token","");
+    res.cookie("token","",{ httpOnly: true, secure: process.env.NODE_ENV === 'production' });
     res.status(200).json({message : 'Logout Successful'});
 }
 module.exports = {
