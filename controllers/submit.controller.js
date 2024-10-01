@@ -1,23 +1,31 @@
 const Submission = require('../models/submission.model.js');
 const redisClient = require('../config/redis.config.js');
+const { promisify } = require('util');
+
+// Promisify Redis client methods for async operations
+const lpushAsync = promisify(redisClient.lpush).bind(redisClient);
 
 const submitProblem = async (req, res) => {
     try {
-        // const { userId, problemId, code, language, action } = req.body;
-        let problemId = 2;
-        let code = 'print("Hello World")';
-        let language = 'python';
-        let action = 'SUBMIT';
+        const { problemId, code, language, action } = req.body;
 
-        // Save submission to database only for SUBMIT action
-        let userId = 123;
+        // Validate required fields
+        if (!problemId || !code || !language || !action) {
+            return res.status(400).json({ error: 'Missing required fields.' });
+        }
+
+        // Extract userId from session
+        const userId = req.session.user.id;
+
+        // SUBMIT AND RUN
         let submission;
         if (action === 'SUBMIT') {
             submission = await Submission.create({
                 problem_id: problemId,
+                user_id: userId,
                 code,
                 language,
-                status: 'Pending',
+                status: 'pending',
             });
         }
 
@@ -31,19 +39,14 @@ const submitProblem = async (req, res) => {
             submissionId: submission ? submission.submission_id : null,
         };
 
-        await redisClient.lpush('submissionQueue', JSON.stringify(submissionData), (err, result) => {
-            if (err) {
-                console.error('Error storing data in Redis: ', err);
-            } else {
-                console.log('Data stored in Redis: ', result);
-            }
-        });
+        const result = await lpushAsync('submissionQueue', JSON.stringify(submissionData));
+        console.log('Data stored in Redis:', result);
 
-        res.status(200).json({ message: 'Submission received', submissionId: submission ? submission.id : null });
+        res.status(200).json({ message: 'Submission received', submissionId: submission ? submission.submission_id : null });
     } catch (error) {
-        console.log("Error submitting the code: ", error);
-        res.status(500).json({ error: 'Failed to submit code' });
+        console.error("Error submitting the code:", error);
+        res.status(500).json({ error: 'Failed to submit code.' });
     }
-}
+};
 
-module.exports = { submitProblem }; 
+module.exports = { submitProblem };
