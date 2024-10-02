@@ -7,13 +7,16 @@ const { validationResult } = require('express-validator');
 const lpushAsync = promisify(redisClient.lpush).bind(redisClient);
 
 const runSubmitProblem = async (req, res) => {
-    const { user_id, problem_id, code, language, action } = req.body;
+    const { problem_id, code, language, action } = req.body;
+    
+    const user = req.user;
+
     let submission = null;
     try {
         // Create an entry in the database
         submission = new Submission({
             problem_id: problem_id,
-            user_id: user_id,
+            user_id: user.user_id,
             code,
             language,
             status: 'pending',

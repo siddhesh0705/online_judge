@@ -15,7 +15,7 @@ router.post('/login', login);
 router.post('/logout', authMiddleware, logout); // Ensure user is authenticated before logging out
 
 // Submit Problem Route (Ensure the user is authenticated)
-router.post('/submit', runSubmitProblem);
+router.post('/submit', authMiddleware, runSubmitProblem);
 
 // Update Submission Status Route (Ensure the user is authenticated)
 //router.post('/update-status', authMiddleware, updateSubmissionStatus);
