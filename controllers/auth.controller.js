@@ -1,15 +1,15 @@
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const cookie=require('cookie-parser');
 const User = require('../models/user.model.js');
 
 const register = async (req, res) => {
     try {
-        // const errors = validationResult(req);
-        // if (!errors.isEmpty()) {
-        //     return res.status(400).json({ errors: errors.array() });
-        // }
-
         const { email, password } = req.body;
+
+        if(!email || !password){
+            return res.status(400).json({ message : 'Eamil and Password are required' });
+        }
 
         const existingUser = await User.findOne({ email });
 
@@ -34,11 +34,6 @@ const register = async (req, res) => {
 
 const login = async (req, res) => {
     try {
-        // const errors = validationResult(req);
-        // if (!errors.isEmpty()) {
-        //     return res.status(400).json({ errors: errors.array() });
-        // }
-
         const { email, password } = req.body;
 
         if (!email || !password) {
@@ -65,9 +60,9 @@ const login = async (req, res) => {
 };
 
 
-const logout = (req, res) => {
+const logout = (req, res) => {  
     try {
-        res.cookie("token", "", { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
+        res.clearCookie("token", { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
         res.status(200).json({ message : 'Logout Successful' });
     }
     catch (error) {
