@@ -4,11 +4,6 @@ const User = require('../models/user.model.js');
 
 const register = async (req, res) => {
     try {
-        // const errors = validationResult(req);
-        // if (!errors.isEmpty()) {
-        //     return res.status(400).json({ errors: errors.array() });
-        // }
-
         const { email, password } = req.body;
 
         const existingUser = await User.findOne({ email });
@@ -27,18 +22,13 @@ const register = async (req, res) => {
         res.status(201).json({ message: 'User registered successfully' });
     }
     catch(error) {
-        res.status(500).json({ message: 'Server error', error });
+        res.status(500).json({ message: 'Server error' });
     }
 };
 
 
 const login = async (req, res) => {
     try {
-        // const errors = validationResult(req);
-        // if (!errors.isEmpty()) {
-        //     return res.status(400).json({ errors: errors.array() });
-        // }
-
         const { email, password } = req.body;
 
         if (!email || !password) {

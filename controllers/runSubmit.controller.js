@@ -1,28 +1,19 @@
 const redisClient = require('../config/redis.config.js');
 const { promisify } = require('util');
-const { Submission } = require('../models/submission.model.js');
+const  Submission  = require('../models/submission.model.js');
 const { validationResult } = require('express-validator');
 
 // Promisify Redis `lpush` for enqueuing submission data
 const lpushAsync = promisify(redisClient.lpush).bind(redisClient);
 
 const runSubmitProblem = async (req, res) => {
-    // Step 1: Validate request
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-    }
-
-    const { problemId, code, language, action } = req.body;
+    const { user_id, problem_id, code, language, action } = req.body;
     let submission = null;
-
     try {
-        const userId = req.session?.user?.id || null;
-
-        // XCreate an entry in the database
-        submission = await Submission.create({
-            problem_id: problemId,
-            user_id: userId,
+        // Create an entry in the database
+        submission = new Submission({
+            problem_id: problem_id,
+            user_id: user_id,
             code,
             language,
             status: 'pending',
@@ -30,13 +21,14 @@ const runSubmitProblem = async (req, res) => {
             createdAt: new Date(),
             updatedAt: new Date(),
         });
+        await submission.save();
 
         console.log(`Submission stored with submissionId: ${submission.submission_id}, action: ${action}`);
 
         // Prepare submission data for Redis queue
         const submissionData = {
             submissionId: submission.submission_id,
-            problemId,
+            problem_id,
             code,
             language,
             action,  // 'RUN' or 'SUBMIT'
@@ -46,8 +38,8 @@ const runSubmitProblem = async (req, res) => {
         // Push submission data to the appropriate Redis queue
         const queue = action === 'RUN' ? 'runQueue' : 'submitQueue';
         await lpushAsync(queue, JSON.stringify(submissionData));
-        console.log(`Submission enqueued with requestId: ${requestId} to ${queue}`);
-
+        console.log(`Submission enqueued with submissionId : ${submission.submission_id} to ${queue}`);
+                        
         // Respond immediately to the frontend
         res.status(200).json({
             message: `${action} request enqueued successfully.`,
