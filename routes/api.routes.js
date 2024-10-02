@@ -6,7 +6,6 @@ const { body } = require('express-validator');
 const authMiddleware = require('../middleware/auth.middleware.js');
 
 router.post('/register', [
-    body('username').isLength({ min: 3, max: 25 }).withMessage('Username must be between 3 and 25 characters.'),
     body('email').isEmail().withMessage('Please provide a valid email.'),
     body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters long.'),
 ], registerUser);

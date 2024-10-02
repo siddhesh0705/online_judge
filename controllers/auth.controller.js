@@ -1,11 +1,16 @@
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const cookieParser = require('cookie-parser');
-const User = require('../models/user.model');
+const User = require('../models/user.model.js');
 
 const register = async (req, res) => {
     try {
-        const { username, email, password } = req.body;
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({ errors: errors.array() });
+        }
+
+        const { email, password } = req.body;
+
         const existingUser = await User.findOne({ email });
 
         if (existingUser) {
@@ -13,44 +18,65 @@ const register = async (req, res) => {
         }
 
         const hashedPassword = await bcrypt.hash(password, 10);
-        const newUser = new User({ username, email, password: hashedPassword });
+        const newUser = new User({
+            email,
+            password: hashedPassword
+        });
         await newUser.save();
 
         res.status(201).json({ message: 'User registered successfully' });
     }
-    catch (error) {
+    catch(error) {
         res.status(500).json({ message: 'Server error' });
     }
 };
 
+
 const login = async (req, res) => {
-    const { email, password } = req.body;
+    try {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return res.status(400).json({ errors: errors.array() });
+        }
 
-    if (!email || !password) {
-        return res.status(400).json({ message: 'Email and password are required' });
+        const { email, password } = req.body;
+
+        if (!email || !password) {
+            return res.status(400).json({ message: 'Email and password are required.' });
+        }
+
+        const checkUser = await User.findOne({ email });
+        
+        if (!checkUser) {
+            return res.status(400).json({ message: 'Email is not registered.' });
+        }
+        
+        const comparePassword = await bcrypt.compare(password, checkUser.password);
+        if (!comparePassword) {
+            return res.status(400).json({ message: 'Wrong Password.' });
+        }
+
+        let token = jwt.sign({ email }, process.env.JWT_SECRET); // secret key shouldnt be leaked
+        res.cookie("token", token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', expires: '1h' });
+        res.status(200).json({ message: 'Login Successful' });
     }
-
-    const checkUser = await User.findOne({email});
-    
-    if(!checkUser){
-        return res.status(400).json({ message: 'Email does not exist' });
+    catch (error) {
+        return res.status(500).json({ message: 'Server Error' });
     }
-    
-    const comparePassword = await bcrypt.compare(password , checkUser.password );
-    if(!comparePassword){
-        return res.status(400).json({ message: 'Wrong Password' });
+};
+
+
+const logout = (req, res) => {
+    try {
+        res.cookie("token", "", { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
+        res.status(200).json({ message : 'Logout Successful' });
     }
-
-    let token = jwt.sign({email},process.env.JWT_SECRET); // secret key shouldnt be leaked
-    res.cookie("token",token,{ httpOnly: true, secure: process.env.NODE_ENV === 'production' });
-    res.status(200).json({message : 'Login Successful'});
-}; 
-
-
-const logout = (req , res) => {
-    res.cookie("token","",{ httpOnly: true, secure: process.env.NODE_ENV === 'production' });
-    res.status(200).json({message : 'Logout Successful'});
+    catch (error) {
+        return res.status(500).json({ message: 'Server error' });
+    }
 }
+
+
 module.exports = {
     register,
     login,

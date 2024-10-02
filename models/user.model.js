@@ -7,21 +7,6 @@ const User = sequelize.define('User', {
         primaryKey: true,
         autoIncrement: true,
     },
-    username: {
-        type: DataTypes.STRING,
-        allowNull: false,
-        unique: true,
-        validate: {
-            len: {
-                args: [3, 25],
-                msg: "Username must be between 3 and 25 characters.",
-            },
-            is: {
-                args: /^[a-zA-Z0-9_]+$/i,
-                msg: "Username can only contain letters, numbers, and underscores.",
-            },
-        },
-    },
     email: {
         type: DataTypes.STRING,
         allowNull: false,
