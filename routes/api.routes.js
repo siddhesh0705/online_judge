@@ -1,24 +1,23 @@
 const express = require('express');
 const router = express.Router();
-const { submitProblem, updateSubmissionStatus } = require('../controllers/runSubmit.controller.js');
-const { registerUser, loginUser, logoutUser } = require('../controllers/auth.controller.js');
-const { body } = require('express-validator');
-const authMiddleware = require('../middleware/auth.middleware.js');
+const { runSubmitProblem } = require('../controllers/runSubmit.controller.js');
+const { register, login, logout } = require('../controllers/auth.controller.js');
+const { body, validationResult } = require('express-validator');
+const authMiddleware = require('../middlewares/auth.middleware.js');
 
-router.post('/register', [
-    body('email').isEmail().withMessage('Please provide a valid email.'),
-    body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters long.'),
-], registerUser);
+// Registration Route
+router.post('/register', register);
 
-router.post('/login', [
-    body('email').isEmail().withMessage('Please provide a valid email.'),
-    body('password').exists().withMessage('Password is required.'),
-], loginUser);
+// Login Route
+router.post('/login', login);
 
-router.post('/logout', logoutUser);
+// Logout Route
+router.post('/logout', logout); // Ensure user is authenticated before logging out
 
-router.post('/submit', authMiddleware, submitProblem);
+// Submit Problem Route (Ensure the user is authenticated)
+router.post('/submit', runSubmitProblem);
 
-router.post('/update-status', authMiddleware, updateSubmissionStatus);
+// Update Submission Status Route (Ensure the user is authenticated)
+//router.post('/update-status', authMiddleware, updateSubmissionStatus);
 
 module.exports = router;

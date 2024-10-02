@@ -1,17 +1,5 @@
 const sequelize = require('./sequelize.config.js');
 
-// Database connection
-const testConnection = async () => {
-  try {
-    await sequelize.authenticate();
-    console.log('Database connection has been established successfully.');
-  }
-  catch(error) {
-    console.error('Unable to connect to the database:', error);
-  }
-};
-testConnection();
-
 // Import Models
 const Problem = require('../models/problem.model.js');
 const Submission = require('../models/submission.model.js');

@@ -4,10 +4,10 @@ const User = require('../models/user.model.js');
 
 const register = async (req, res) => {
     try {
-        const errors = validationResult(req);
-        if (!errors.isEmpty()) {
-            return res.status(400).json({ errors: errors.array() });
-        }
+        // const errors = validationResult(req);
+        // if (!errors.isEmpty()) {
+        //     return res.status(400).json({ errors: errors.array() });
+        // }
 
         const { email, password } = req.body;
 
@@ -27,26 +27,25 @@ const register = async (req, res) => {
         res.status(201).json({ message: 'User registered successfully' });
     }
     catch(error) {
-        res.status(500).json({ message: 'Server error' });
+        res.status(500).json({ message: 'Server error', error });
     }
 };
 
 
 const login = async (req, res) => {
     try {
-        const errors = validationResult(req);
-        if (!errors.isEmpty()) {
-            return res.status(400).json({ errors: errors.array() });
-        }
+        // const errors = validationResult(req);
+        // if (!errors.isEmpty()) {
+        //     return res.status(400).json({ errors: errors.array() });
+        // }
 
         const { email, password } = req.body;
 
         if (!email || !password) {
             return res.status(400).json({ message: 'Email and password are required.' });
         }
-
+       
         const checkUser = await User.findOne({ email });
-        
         if (!checkUser) {
             return res.status(400).json({ message: 'Email is not registered.' });
         }
@@ -57,11 +56,11 @@ const login = async (req, res) => {
         }
 
         let token = jwt.sign({ email }, process.env.JWT_SECRET); // secret key shouldnt be leaked
-        res.cookie("token", token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', expires: '1h' });
+        res.cookie("token", token, { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
         res.status(200).json({ message: 'Login Successful' });
     }
     catch (error) {
-        return res.status(500).json({ message: 'Server Error' });
+        return res.status(500).json({ message: 'Server Error'});
     }
 };
 
