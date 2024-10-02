@@ -1,4 +1,4 @@
-const redisClient = require('../config/redisClient.js');
+const redisClient = require('../config/redis.config.js');
 const { promisify } = require('util');
 const { v4: uuidv4 } = require('uuid');
 const { Submission } = require('../models/submission.model.js');

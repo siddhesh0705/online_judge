@@ -1,5 +1,5 @@
 const cron = require('node-cron');
-const { Submission } = require('../models');
+const { Submission } = require('../models/submission.model');
 
 const startCleanupJob = () => {
     const job = cron.schedule('*/30 * * * *', async () => { // every half hour
