@@ -2,16 +2,17 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const cookie=require('cookie-parser');
 const User = require('../models/user.model.js');
+require('dotenv').config();
 
 const register = async (req, res) => {
     try {
         const { email, password } = req.body;
 
         if(!email || !password){
-            return res.status(400).json({ message : 'Eamil and Password are required' });
+            return res.status(400).json({ message : 'Email and Password are required' });
         }
 
-        const existingUser = await User.findOne({ email });
+        const existingUser = await User.findOne( { where : { email } });
 
         if (existingUser) {
             return res.status(400).json({ message: 'User already exists!' });
@@ -40,7 +41,7 @@ const login = async (req, res) => {
             return res.status(400).json({ message: 'Email and password are required.' });
         }
        
-        const checkUser = await User.findOne({ email });
+        const checkUser = await User.findOne({ where: { email } });
         if (!checkUser) {
             return res.status(400).json({ message: 'Email is not registered.' });
         }
@@ -50,7 +51,7 @@ const login = async (req, res) => {
             return res.status(400).json({ message: 'Wrong Password.' });
         }
 
-        let token = jwt.sign({ email }, process.env.JWT_SECRET); // secret key shouldnt be leaked
+        let token = jwt.sign({ email, user_id: checkUser.user_id }, process.env.JWT_SECRET); // secret key shouldnt be leaked
         res.cookie("token", token, { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
         res.status(200).json({ message: 'Login Successful' });
     }
@@ -62,6 +63,9 @@ const login = async (req, res) => {
 
 const logout = (req, res) => {  
     try {
+        if (!req.cookies.token) {
+            return res.status(401).json({ message: 'Already logged out' });
+        }
         res.clearCookie("token", { httpOnly: true, secure: process.env.NODE_ENV === 'production' });
         res.status(200).json({ message : 'Logout Successful' });
     }
