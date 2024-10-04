@@ -26,12 +26,13 @@ class ActionEnum(str, Enum):
     SUBMIT = "SUBMIT"
 
 
-def run_code_in_docker_combo(code: str, language: str, submission_id: int, test_case_paths: list):
+def run_code_in_docker_combo(code: str, language: str, submission_id: int, test_case_paths: list, expected_output_paths: list):
     """
     Runs Python or C++ code in Docker, processing multiple input files and saving each output.
     Organizes input and output files within a single question folder.
     """
-    # Define paths and filenames
+    
+    
     filename = f"submission_{submission_id}"
     if language == "python":
         filename += ".py"
@@ -40,7 +41,8 @@ def run_code_in_docker_combo(code: str, language: str, submission_id: int, test_
     else:
         return "Unsupported language"
 
-    # Create question-specific folder structure
+    # Create folder structure
+    
     question_dir = os.path.join(os.getcwd(), f"question_{submission_id}")
     input_dir = os.path.join(question_dir, "inputs")
     output_dir = os.path.join(question_dir, "outputs")
@@ -57,64 +59,86 @@ def run_code_in_docker_combo(code: str, language: str, submission_id: int, test_
 
     # Prepare Docker command based on language
     if language == "python":
-        docker_command = (
+        run_command_template = (
             f"docker run --rm --memory=256m --cpus=1 "
-            f"-v {question_dir}:/app -w /app python:3.9 bash -c 'for file in /app/inputs/*; do "
-            f"timeout 2s python {filename} < $file > /app/outputs/$(basename $file)_output.txt 2>&1 || echo Time Limit Exceeded > /app/outputs/$(basename $file)_output.txt; done'"
-        )
+            f"-v {question_dir}:/app -w /app python:3.9 bash -c"
+            f"'timeout 2s python {filename} < {{input_file}} > {{output_file}} 2>&1'"
+          )
+         
     elif language == "cpp":
         # Compile C++ code
         compile_command = (
             f"docker run --rm --memory=256m --cpus=1 "
             f"-v {question_dir}:/app -w /app gcc:latest g++ -o {filename}_exec {filename}"
         )
+        
         compile_result = subprocess.run(compile_command, shell=True, capture_output=True, text=True)
         
         if compile_result.returncode != 0:
             return f"Compilation Error: {compile_result.stderr.strip()}"
-
-        docker_command = (
+        
+        run_command_template = (
             f"docker run --rm --memory=256m --cpus=1 "
-            f"-v {question_dir}:/app -w /app gcc:latest bash -c 'for file in /app/inputs/*; do "
-            f"timeout 2s ./{filename}_exec < $file > /app/outputs/$(basename $file)_output.txt 2>&1 || echo Time Limit Exceeded > /app/outputs/$(basename $file)_output.txt; done'"
+            f"-v {question_dir}:/app -w /app gcc:latest bash -c"
+            f"'timeout 2s ./{filename}_exec < {{input_file}} > {{output_file}} 2>&1'"
         )
+    
+    for test_case, expected_output_path in zip(os.listdir(input_dir),expected_output_paths):
+        input_file = os.path.join(input_dir, test_case)
+        output_file = os.path.join(output_dir, f"{test_case}_output.txt")
+        
+        full_command = run_command_template.format(input_file=input_file, output_file=output_file)
+        
+        result = subprocess.run(full_command, shell=True, capture_output=True, text=True)
+        
+        if "Time Limit Exceeded" in result.stderr or result.returncode != 0:
+            
+            result["status"] = "Failed"
+            result["message"] = "Time Limit Exceeded ({test_case})"
+            break
+        
+        
+        with open(output_file, "r") as f_output, open(expected_output_path, "r") as f_expected:
+            actual_output = f_output.read().strip()
+            expected_output = f_expected.read().strip()
+            result["outputs"][test_case] = actual_output
 
-    # Execute Docker command
-    subprocess.run(docker_command, shell=True)
-
-    # Collect output file paths and return them
-    outputs = {f: os.path.join(output_dir, f) for f in os.listdir(output_dir)}
-    return outputs
-
-
-@app.post("/submit/")
-async def execute_program(submission: Submission):
-    # Define the test case paths
-    test_case_paths = ["input1.txt", "input2.txt"]  # Example test case files
-
-    # Run the code in Docker
-    result = run_code_in_docker_combo(submission.code, submission.language, submission.submission_id, test_case_paths)
-
-    # Check expected vs. actual output logic here (pseudo-code example)
-    # Let's assume you load expected output from files and compare
-    expected_output_paths = ["expected1.txt", "expected2.txt"]  # Define paths to expected outputs
-    is_correct = True  # A placeholder for actual comparison logic
-
-    for output_file, expected_path in zip(result.values(), expected_output_paths):
-        with open(output_file) as f_output, open(expected_path) as f_expected:
-            if f_output.read().strip() != f_expected.read().strip():
-                is_correct = False
+            
+            if actual_output != expected_output:
+                result["status"] = "Failed"
+                result["message"] = f"Test case {test_case} failed: Expected {expected_output}, got {actual_output}"
                 break
+    
+    return result
 
-    # Set status based on comparison result
-    if is_correct:
+            
+
+@app.post("/submit/") 
+async def execute_program(submission: Submission):
+    
+    # Define the test case paths
+    
+    test_case_paths = ["input1.txt", "input2.txt"] 
+    expected_output_paths = ["expected1.txt", "expected2.txt"]  
+    
+    # Run the code in Docker
+    
+    result = run_code_in_docker_combo(submission.code, submission.language, submission.submission_id, test_case_paths, expected_output_paths)
+    
+    if result["status"] == "Correct":
         submission.status = StatusEnum.accepted
-        submission.results = result
+    
     else:
         submission.status = StatusEnum.wrong_answer
-        submission.results = result
-
+    
+    submission.results = {
+		"message": result["message"],
+		"outputs": result["outputs"],
+	}
+    
+    
     # Cleanup the question directory
+    
     question_dir = os.path.join(os.getcwd(), f"question_{submission.submission_id}")
     if os.path.exists(question_dir):
         shutil.rmtree(question_dir)
