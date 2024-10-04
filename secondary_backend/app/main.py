@@ -9,6 +9,8 @@ import json
 from enum import Enum
 from fastapi.exceptions import HTTPException
 import os
+import shutil
+
 
 app = FastAPI()
 redis_client = Redis(host='localhost', port=6379   , db=0)
@@ -24,11 +26,12 @@ class ActionEnum(str, Enum):
     SUBMIT = "SUBMIT"
 
 
-def run_code_in_docker(code: str, language: str, submission_id: int) -> str:
+def run_code_in_docker_combo(code: str, language: str, submission_id: int, test_case_paths: list):
     """
-    Runs the code inside a Docker container with a time limit using subprocess timeout.
+    Runs Python or C++ code in Docker, processing multiple input files and saving each output.
+    Organizes input and output files within a single question folder.
     """
-    # Define the filename based on the submission ID and language
+    # Define paths and filenames
     filename = f"submission_{submission_id}"
     if language == "python":
         filename += ".py"
@@ -37,87 +40,86 @@ def run_code_in_docker(code: str, language: str, submission_id: int) -> str:
     else:
         return "Unsupported language"
 
-    # Save the code to a file in the current directory
-    with open(filename, "w") as f:
+    # Create question-specific folder structure
+    question_dir = os.path.join(os.getcwd(), f"question_{submission_id}")
+    input_dir = os.path.join(question_dir, "inputs")
+    output_dir = os.path.join(question_dir, "outputs")
+    os.makedirs(input_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Save code to a file in the question directory
+    with open(os.path.join(question_dir, filename), "w") as f:
         f.write(code)
 
-    # Get the absolute path of the current working directory
-    host_path = os.getcwd()
+    # Copy test cases into the dedicated input directory
+    for test_case_path in test_case_paths:
+        subprocess.run(f"cp {test_case_path} {input_dir}", shell=True)
 
-    # Set a time limit for code execution
-    time_limit = 2
-
-    # Prepare Docker commands based on the language
-    docker_command = ""
+    # Prepare Docker command based on language
     if language == "python":
         docker_command = (
             f"docker run --rm --memory=256m --cpus=1 "
-            f"-v {host_path}:/app -w /app python:3.9 python {filename}"
+            f"-v {question_dir}:/app -w /app python:3.9 bash -c 'for file in /app/inputs/*; do "
+            f"timeout 2s python {filename} < $file > /app/outputs/$(basename $file)_output.txt 2>&1 || echo Time Limit Exceeded > /app/outputs/$(basename $file)_output.txt; done'"
         )
     elif language == "cpp":
+        # Compile C++ code
         compile_command = (
             f"docker run --rm --memory=256m --cpus=1 "
-            f"-v {host_path}:/app -w /app gcc:latest g++ -o {filename}_exec {filename}"
+            f"-v {question_dir}:/app -w /app gcc:latest g++ -o {filename}_exec {filename}"
         )
-        run_command = (
+        compile_result = subprocess.run(compile_command, shell=True, capture_output=True, text=True)
+        
+        if compile_result.returncode != 0:
+            return f"Compilation Error: {compile_result.stderr.strip()}"
+
+        docker_command = (
             f"docker run --rm --memory=256m --cpus=1 "
-            f"-v {host_path}:/app -w /app gcc:latest ./{filename}_exec"
+            f"-v {question_dir}:/app -w /app gcc:latest bash -c 'for file in /app/inputs/*; do "
+            f"timeout 2s ./{filename}_exec < $file > /app/outputs/$(basename $file)_output.txt 2>&1 || echo Time Limit Exceeded > /app/outputs/$(basename $file)_output.txt; done'"
         )
-        docker_command = f"{compile_command} && {run_command}"
 
-    try:
-        # Run the Docker command with a timeout
-        result = subprocess.run(docker_command, shell=True, capture_output=True, text=True, timeout=time_limit)
+    # Execute Docker command
+    subprocess.run(docker_command, shell=True)
 
-        # Return stdout if successful, otherwise return stderr with the error
-        return result.stdout.strip() if result.returncode == 0 else f"Error: {result.stderr.strip()}"
-
-    except subprocess.TimeoutExpired:
-        # Kill the Docker container if it exceeds the time limit
-        subprocess.run(f"docker ps -q --filter ancestor=python:3.9 | xargs -r docker kill", shell=True)
-
-        return f"Error: Time Limit Exceeded ({time_limit} seconds)"
-
-    finally:
-        # Clean up the code file after execution
-        if os.path.exists(filename):
-            os.remove(filename)
-        # Clean up compiled files in case of C++
-        if language == "cpp" and os.path.exists(f"{filename}_exec"):
-            os.remove(f"{filename}_exec")
+    # Collect output file paths and return them
+    outputs = {f: os.path.join(output_dir, f) for f in os.listdir(output_dir)}
+    return outputs
 
 
 @app.post("/submit/")
-async def submit_code(submission: Submission):
-    """
-    API endpoint to submit and run code inside a Docker container.
-    """
-    # Run the code in Docker
-    result = run_code_in_docker(submission.code, submission.language, submission.submission_id)
+async def execute_program(submission: Submission):
+    # Define the test case paths
+    test_case_paths = ["input1.txt", "input2.txt"]  # Example test case files
 
-    # Set the status based on the result
-    if "Error: Time Limit Exceeded" in result:
-        submission.status = StatusEnum.time_limit_exceeded
-    elif "Error" in result:
-        submission.status = StatusEnum.runtime_error
-    else:
+    # Run the code in Docker
+    result = run_code_in_docker_combo(submission.code, submission.language, submission.submission_id, test_case_paths)
+
+    # Check expected vs. actual output logic here (pseudo-code example)
+    # Let's assume you load expected output from files and compare
+    expected_output_paths = ["expected1.txt", "expected2.txt"]  # Define paths to expected outputs
+    is_correct = True  # A placeholder for actual comparison logic
+
+    for output_file, expected_path in zip(result.values(), expected_output_paths):
+        with open(output_file) as f_output, open(expected_path) as f_expected:
+            if f_output.read().strip() != f_expected.read().strip():
+                is_correct = False
+                break
+
+    # Set status based on comparison result
+    if is_correct:
         submission.status = StatusEnum.accepted
         submission.results = result
+    else:
+        submission.status = StatusEnum.wrong_answer
+        submission.results = result
+
+    # Cleanup the question directory
+    question_dir = os.path.join(os.getcwd(), f"question_{submission.submission_id}")
+    if os.path.exists(question_dir):
+        shutil.rmtree(question_dir)
 
     return submission
-
-
-async def execute_program(program: Submission):
-    # Execute the program and set the submission_id
-    result = run_code_in_docker(program.code, program.language, program.submission_id)
-
-    if "Error" in result:
-        program.status = StatusEnum.runtime_error
-    else:
-        program.status = StatusEnum.accepted
-        program.results = result
-    return program
-
 
 async def process_single_queue_item():
     # Try to get an item from the Redis queue
