@@ -24,15 +24,17 @@ QUEUE_NAME = 'runQueue'
 # Webhook configuration
 WEB_HOOK_URL = "http://localhost:3000/api/webhook"
 
-# Worker pool size
-WORKER_POOL_SIZE = 5
 
-redis_client = redis.Redis(host='localhost', port=6379   , db=0)
+redis_client = redis.Redis(host='localhost', port=6379  , db=0)
 
 class ActionEnum(str, Enum):
     RUN = "RUN"
     SUBMIT = "SUBMIT"
 
+
+import os
+import subprocess
+import shutil
 
 def run_code_in_docker(code: str, language: str, submission_id: int, problem_id: int, test_case_paths: list, expected_output_paths: list):
     try:
@@ -45,16 +47,18 @@ def run_code_in_docker(code: str, language: str, submission_id: int, problem_id:
         filename = f"submission_{submission_id}"
         if language == "python":
             filename += ".py"
+            timeout = 4  # 3 seconds for Python
         elif language == "cpp" or language == "c++":
             filename += ".cpp"
+            timeout = 2  # 1 second for C++
+        elif language == "java":
+            filename += ".java"
+            timeout = 2  # 1 second for Java
         else:
             results["status"] = "failed"
             results["message"] = "Unsupported programming language"
             return results
 
-        # Create folder structure
-        
-        # question_dir = "/home/atharvfakatkar/contrib/online_judge/problems/"
         question_dir = os.path.join(os.getcwd(), f"../../problems/submission_{submission_id}")
         input_dir = os.path.join(question_dir, "inputs")
         output_dir = os.path.join(question_dir, "outputs")
@@ -63,68 +67,64 @@ def run_code_in_docker(code: str, language: str, submission_id: int, problem_id:
         os.makedirs(output_dir, exist_ok=True)
         os.makedirs(expected_output_dir, exist_ok=True)
 
-        # Save code to a file in the question directory
         with open(os.path.join(question_dir, filename), "w") as f:
             f.write(code)
 
-        # for test_case_path in test_case_paths:
-        #     print(test_case_path)
-
-        # Copy test cases into the dedicated input directory
         for test_case_path in test_case_paths:
             subprocess.run(f"cp {test_case_path} {input_dir}", shell=True)
             
         for expected_output_path in expected_output_paths:
             subprocess.run(f"cp {expected_output_path} {expected_output_dir}", shell=True)
 
-
-        # Prepare Docker command based on language  
         if language == "python":
             run_command_template = (
                 f"docker run --rm --memory=256m --cpus=1 "
                 f"-v {question_dir}:/app -w /app python:3.9 bash -c "
-                f"\"timeout 2s python {filename} < {{input_file}} > {{output_file}} 2>&1\""
+                f"\"timeout {timeout}s python {filename} < {{input_file}} > {{output_file}} 2>&1\""
             )
-            # run_command_template = (
-            #     f"docker run --rm --memory=256m --cpus=1 "
-            #     f"-v {question_dir}:/app -w /app python:3.9 bash -c"
-            #     f"'timeout 2s python {filename} < {{input_file}} > {{output_file}} 2>&1'"
-            # )
-            
         elif language == "cpp" or language == "c++":
-            print("Compiling the cpp code")
-            # Compile C++ code
             compile_command = (
                 f"docker run --rm --memory=256m --cpus=1 "
                 f"-v {question_dir}:/app -w /app gcc:latest g++ -o {filename}_exec {filename}"
             )
             
+            compile_result = subprocess.run(compile_command, shell=True, capture_output=True, text=True)
+            
+            if compile_result.returncode != 0:
+                return {
+                    "status": "compilation_error",
+                    "message": compile_result.stderr
+                }
+            
+            run_command_template = (
+                f"docker run --rm --memory=256m --cpus=1 "
+                f"-v {question_dir}:/app -w /app gcc:latest bash -c "
+                f"'timeout {timeout}s ./{filename}_exec < {{input_file}} > {{output_file}} 2>&1'"
+            )
+        elif language == "java":
+            compile_command = (
+                f"docker run --rm --memory=256m --cpus=1 "
+                f"-v {question_dir}:/app -w /app openjdk:11 javac {filename}"
+            )
             
             compile_result = subprocess.run(compile_command, shell=True, capture_output=True, text=True)
             
             if compile_result.returncode != 0:
-                compile_result["status"] = "Failed"
-                compile_result["message"] = compile_result.stderr
-
-                print("Compilation Error")
-
-                return compile_result
-            
-            print("compilation successful")
+                return {
+                    "status": "compilation_error",
+                    "message": compile_result.stderr
+                }
             
             run_command_template = (
                 f"docker run --rm --memory=256m --cpus=1 "
-                f"-v {question_dir}:/app -w /app gcc:latest bash -c"
-                f"'timeout 2s ./{filename}_exec < {{input_file}} > {{output_file}} 2>&1'"
+                f"-v {question_dir}:/app -w /app openjdk:11 bash -c "
+                f"\"timeout {timeout}s java {filename[:-5]} < {{input_file}} > {{output_file}} 2>&1\""
             )
-        
-        
-        
-        # for test_case, expected_output_path in zip(os.listdir(input_dir),expected_output_paths):
+
         for number, test_case, expected_output_filename in zip(range(6), os.listdir(input_dir), os.listdir(expected_output_dir)):
             input_file = os.path.join("/app/inputs", test_case)
             output_file = os.path.join("/app/outputs", f"{test_case[0:-4]}_output.txt")
-            output_val_file  = os.path.join(output_dir, f"{test_case[0:-4]}_output.txt")
+            output_val_file = os.path.join(output_dir, f"{test_case[0:-4]}_output.txt")
             expected_output_file = os.path.join(expected_output_dir, expected_output_filename)
             
             full_command = run_command_template.format(input_file=input_file, output_file=output_file)
@@ -137,7 +137,7 @@ def run_code_in_docker(code: str, language: str, submission_id: int, problem_id:
                     shell=True,
                     capture_output=True,
                     text=True,
-                    timeout=4  # Adjust timeout as needed
+                    timeout=timeout + 8  # Add 1 second buffer for Docker overhead
                 )
                 
                 if result.returncode == 0:
@@ -146,40 +146,48 @@ def run_code_in_docker(code: str, language: str, submission_id: int, problem_id:
                     with open(output_val_file, "r") as f_output, open(expected_output_file, "r") as f_expected:
                         actual_output = f_output.read().strip()
                         expected_output = f_expected.read().strip()
-                        # results["results"] = actual_output
 
-                        
                         if actual_output != expected_output:
-                            results["status"] = "Failed"
+                            results["status"] = "wrong_answer"
                             results["message"] = f"Failed on testcase {number}."
                             return results
-                        
-
+                elif result.returncode == 124:  # 12        4 is the return code for timeout command
+                    return {
+                        "status": "time_limit_exceeded",
+                        "message": f"Execution time exceeded {timeout} seconds on testcase {number}."
+                    }
                 else:
                     print(f"Command failed with return code {result.returncode}")
-                    print(f"output : {result.stdout}\n message : {result.stderr}")
+                    print(f"output: {result.stdout}\nmessage: {result.stderr}")
                     return {
-                        "status": "error",
-                        # "results": result.stdout,
+                        "status": "runtime_error",
                         "message": result.stderr
                     }
             
             except subprocess.TimeoutExpired:
-                print("Command execution timed out")
+                print("Docker command execution timed out")
                 return {
-                    "status": "timeout",
-                    "message": "Execution took too long and was terminated"
+                    "status": "internal_error",
+                    "message": "Docker execution took too long and was terminated"
                 }
             except Exception as e:
                 print(f"An error occurred: {str(e)}")
                 return {
-                    "status": "exception",
+                    "status": "internal_error",
                     "message": str(e)
                 }
         
         return results
     except Exception as e:
-        print(f"Error running code in Docker : ", e)
+        print(f"Error running code in Docker: ", e)
+        return {
+            "status": "internal_error",
+            "message": str(e)
+        }
+    finally:
+        # Cleanup the question directory
+        if os.path.exists(question_dir):
+            shutil.rmtree(question_dir)
 
 
 @app.post("/submit/")
@@ -215,9 +223,9 @@ async def execute_program(submission: Submission):
         
         # Cleanup the question directory
         
-        question_dir = os.path.join(os.getcwd(), "../../problems", f"submission_{submission.submission_id}")
-        if os.path.exists(question_dir):
-            shutil.rmtree(question_dir)
+        # question_dir = os.path.join(os.getcwd(), "../../problems", f"submission_{submission.submission_id}")
+        # if os.path.exists(question_dir):
+        #     shutil.rmtree(question_dir)
 
         return submission
         
@@ -304,10 +312,12 @@ async def startup_event():
         # Start the listener task
         asyncio.create_task(process_queue_continuously(queue))
         print("Processing the tasks continuously")
+
+        asyncio.create_task(worker(queue))
         
-        # Start the worker pool
-        for _ in range(WORKER_POOL_SIZE):
-            asyncio.create_task(worker(queue))
+        # # Start the worker pool
+        # for _ in range(WORKER_POOL_SIZE):
+        #     asyncio.create_task(worker(queue))
         
     except ConnectionError as e:
         print(f"Redis connection error: {e}")
@@ -318,7 +328,7 @@ async def shutdown_event():
     global redis_client
     if redis_client:
         await redis_client.close()
-    # await asyncio.gather(*worker_tasks, return_exceptions=True)
+    # await asyncio.gather(*worker, return_exceptions=True)
 
 
 @app.get("/")
