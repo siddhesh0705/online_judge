@@ -34,12 +34,12 @@ class ActionEnum(str, Enum):
     SUBMIT = "SUBMIT"
 
 
-def run_code_in_docker(code: str, language: str, submission_id: int, test_case_paths: list, expected_output_paths: list):
+def run_code_in_docker(code: str, language: str, submission_id: int, problem_id: int, test_case_paths: list, expected_output_paths: list):
     try:
-        result = {
+        results = {
             "status": "accepted",
             "message": "All testcases passed",
-            "results": {}
+            "results": ""                       
         }
 
         filename = f"submission_{submission_id}"
@@ -48,17 +48,20 @@ def run_code_in_docker(code: str, language: str, submission_id: int, test_case_p
         elif language == "cpp" or language == "c++":
             filename += ".cpp"
         else:
-            result["status"] = "failed"
-            result["message"] = "Unsupported programming language"
-            return result
+            results["status"] = "failed"
+            results["message"] = "Unsupported programming language"
+            return results
 
         # Create folder structure
         
-        question_dir = os.path.join(os.getcwd(), f"question_{submission_id}")
+        # question_dir = "/home/atharvfakatkar/contrib/online_judge/problems/"
+        question_dir = os.path.join(os.getcwd(), f"../../problems/submission_{submission_id}")
         input_dir = os.path.join(question_dir, "inputs")
         output_dir = os.path.join(question_dir, "outputs")
+        expected_output_dir = os.path.join(question_dir, "exp_outputs")
         os.makedirs(input_dir, exist_ok=True)
         os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(expected_output_dir, exist_ok=True)
 
         # Save code to a file in the question directory
         with open(os.path.join(question_dir, filename), "w") as f:
@@ -70,6 +73,9 @@ def run_code_in_docker(code: str, language: str, submission_id: int, test_case_p
         # Copy test cases into the dedicated input directory
         for test_case_path in test_case_paths:
             subprocess.run(f"cp {test_case_path} {input_dir}", shell=True)
+            
+        for expected_output_path in expected_output_paths:
+            subprocess.run(f"cp {expected_output_path} {expected_output_dir}", shell=True)
 
 
         # Prepare Docker command based on language  
@@ -112,12 +118,14 @@ def run_code_in_docker(code: str, language: str, submission_id: int, test_case_p
                 f"'timeout 2s ./{filename}_exec < {{input_file}} > {{output_file}} 2>&1'"
             )
         
-
-        print("Validating the outputs")
+        
+        
         # for test_case, expected_output_path in zip(os.listdir(input_dir),expected_output_paths):
-        for test_case, expected_output_path in zip(test_case_paths,expected_output_paths):
-            input_file = os.path.join(input_dir, test_case)
-            output_file = os.path.join(output_dir, f"{test_case}_output.txt")
+        for number, test_case, expected_output_filename in zip(range(6), os.listdir(input_dir), os.listdir(expected_output_dir)):
+            input_file = os.path.join("/app/inputs", test_case)
+            output_file = os.path.join("/app/outputs", f"{test_case[0:-4]}_output.txt")
+            output_val_file  = os.path.join(output_dir, f"{test_case[0:-4]}_output.txt")
+            expected_output_file = os.path.join(expected_output_dir, expected_output_filename)
             
             full_command = run_command_template.format(input_file=input_file, output_file=output_file)
             
@@ -129,22 +137,30 @@ def run_code_in_docker(code: str, language: str, submission_id: int, test_case_p
                     shell=True,
                     capture_output=True,
                     text=True,
-                    timeout=2  # Adjust timeout as needed
+                    timeout=4  # Adjust timeout as needed
                 )
                 
                 if result.returncode == 0:
                     print("Command executed successfully")
-                    return {
-                        "status": "accepted",
-                        "results": result.stdout,
-                        "message": result.stderr
-                    }
+
+                    with open(output_val_file, "r") as f_output, open(expected_output_file, "r") as f_expected:
+                        actual_output = f_output.read().strip()
+                        expected_output = f_expected.read().strip()
+                        # results["results"] = actual_output
+
+                        
+                        if actual_output != expected_output:
+                            results["status"] = "Failed"
+                            results["message"] = f"Failed on testcase {number}."
+                            return results
+                        
+
                 else:
                     print(f"Command failed with return code {result.returncode}")
                     print(f"output : {result.stdout}\n message : {result.stderr}")
                     return {
                         "status": "error",
-                        "results": result.stdout,
+                        # "results": result.stdout,
                         "message": result.stderr
                     }
             
@@ -161,7 +177,7 @@ def run_code_in_docker(code: str, language: str, submission_id: int, test_case_p
                     "message": str(e)
                 }
         
-        return result
+        return results
     except Exception as e:
         print(f"Error running code in Docker : ", e)
 
@@ -176,72 +192,35 @@ async def execute_program(submission: Submission):
         input_test_case_paths = []
         expected_output_paths = []
 
-        for i in range(0,5):
+        for i in range(0,6):
             input_test_case_paths.append(os.path.join(test_case_paths, f"in{i}.txt"))
             # print(in)
             expected_output_paths.append(os.path.join(test_case_paths, f"out{i}.txt"))
 
-        result = run_code_in_docker(submission.code, submission.language, submission.submission_id, input_test_case_paths, expected_output_paths)
+        results = run_code_in_docker(submission.code, submission.language, submission.submission_id, submission.problem_id, input_test_case_paths, expected_output_paths)
     
-        if result["status"] == "Correct":
+
+        # Status management missing
+        if results["status"] == "accepted":
             submission.status = StatusEnum.accepted
         
         else:
             submission.status = StatusEnum.wrong_answer
         
         submission.results = {
-            "message": result["message"],
-            "results": result["results"],
+            "message": results["message"],
+            "results": results['results'],
         }
         
         
-        # Cle       anup the question directory
+        # Cleanup the question directory
         
-        question_dir = os.path.join(os.getcwd(), f"question_{submission.submission_id}")
+        question_dir = os.path.join(os.getcwd(), "../../problems", f"submission_{submission.submission_id}")
         if os.path.exists(question_dir):
             shutil.rmtree(question_dir)
 
         return submission
-
-
-        # # Run the code in Docker
-        # print("getting result from docker containers.")
-        # result = run_code_in_docker(submission.code, submission.language, submission.submission_id, input_test_case_paths)
-        # print("result retrieved : ", result)
-
         
-        # is_correct = True
-
-        # print("verifying results")
-        # is_correct = True
-        # for i, output_file in enumerate(result):
-        #     expected_file = os.path.join(expected_output_paths, "out", f"{i}.txt")
-        #     try:
-        #         with open(output_file, 'r') as f_output, open(expected_file, 'r') as f_expected:
-        #             if f_output.read().strip() != f_expected.read().strip():
-        #                 is_correct = False
-        #                 break
-        #     except IOError as e:
-        #         print(f"Error reading files: {e}")
-        #         is_correct = False
-        #         break
-    
-        # print("results verified with result : ", result)
-        
-        # # Set status based on comparison result
-        # if is_correct:
-        #     submission.status = "accepted"
-        #     submission.results = result
-        # else:
-        #     submission.status = "wrong_answer"
-        #     submission.results = result
-
-        # # Cleanup the question directory
-        # question_dir = os.path.join(os.getcwd(), f"question_{submission.submission_id}")
-        # if os.path.exists(question_dir):
-        #     shutil.rmtree(question_dir)
-
-        # return submission
     except Exception as e:
         print(f"Error executing the task : {e}")
 
@@ -258,10 +237,19 @@ async def worker(queue: asyncio.Queue):
             result = await execute_program(task)
             print("Result: ", result)
 
-            response = result.results.json()
+            submission_result = {
+                "submission_id": result.submission_id,
+                "problem_id": result.problem_id,
+                "user_id": result.user_id,
+                "results": result.results["message"],
+                "status": result.status
+            }
 
-            await send_result_to_webhook(response)
-            print("Result sent to webhook")
+            # payload = json.dumps(submission_result)
+
+
+            await send_result_to_webhook(submission_result)
+            print(f"Result sent to webhook : {submission_result}")
         except Exception as e:
             print(f"Error processing task: {e}")
         finally:

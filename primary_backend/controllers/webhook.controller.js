@@ -8,12 +8,12 @@ const handleWebhook = async(req, res) => {
     try {
         // Find the submission entry in the database
         const submission = await Submission.findByPk(submission_id);
-        console.log(`Submission ${submission_id} found in the database`);
-
+        
         if (!submission) {
             return res.status(404).json({ error: 'Submission not found' });
         }
-
+        
+        console.log(`Submission ${submission_id} found in the database`);
 
         // Update the database entry
         await Submission.update(
