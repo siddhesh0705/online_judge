@@ -23,6 +23,6 @@ class Submission(BaseModel):
     user_id: int
     code: str
     language: str
-    results: str = None 
+    results: str | None = None
     status: StatusEnum = StatusEnum.pending
 

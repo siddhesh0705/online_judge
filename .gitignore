@@ -10,6 +10,7 @@ yarn-error.log*
 
 # Environment variables
 .env
+venv
 
 # Database files
 *.sqlite
