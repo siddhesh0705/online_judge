@@ -1,10 +1,10 @@
-const { Submission } = require('../models/submission.model');
+const Submission = require('../models/submission.model');
 
 const pollSubmissionStatus = async (req, res) => {
-    const { submissionId } = req.params;
+    const { submission_id } = req.query     ;
 
     try {
-        const submission = await Submission.findByPk(submissionId);
+        const submission = await Submission.findByPk(submission_id);
 
         if (!submission) {
             return res.status(404).json({ error: 'Submission not found' });
@@ -14,7 +14,7 @@ const pollSubmissionStatus = async (req, res) => {
         res.status(200).json({
             submissionId: submission.submission_id,
             status: submission.status,
-            output: submission.output,
+            results: submission.results,
         });
     }
     catch(error) {

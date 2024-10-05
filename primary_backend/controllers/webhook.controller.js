@@ -1,24 +1,27 @@
-const { Submission } = require('../models/submission.model');
+const Submission = require('../models/submission.model');
 
 
 const handleWebhook = async(req, res) => {
-    const { status, output, submissionId } = req.body;
+    console.log('Received webhook:', req.body);
+    const { submission_id, problem_id, user_id, results, status } = req.body;
 
     try {
         // Find the submission entry in the database
-        const submission = await Submission.findByPk(submissionId);
-
+        const submission = await Submission.findByPk(submission_id);
+        
         if (!submission) {
             return res.status(404).json({ error: 'Submission not found' });
         }
+        
+        console.log(`Submission ${submission_id} found in the database`);
 
         // Update the database entry
         await Submission.update(
-            { status, output, updatedAt: new Date() },
-            { where: { submission_id: submissionId } }
+            { status, results, updatedAt: new Date() },
+            { where: { submission_id: submission_id } }
         );
 
-        console.log(`Submission ${submissionId} updated with status: ${status}, output: ${output}`);
+        console.log(`Submission ${submission_id} updated with status: ${status}, output: ${results}`);
 
         // Respond to FastAPI that the webhook was received successfully
         res.status(200).json({ message: 'Webhook processed and database updated successfully.' });

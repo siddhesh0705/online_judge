@@ -1,5 +1,5 @@
 #!/bin/sh
-'''exec' "/home/siddhesh/Desktop/online judge/secondary_backend/venv/bin/python" "$0" "$@"
+'''exec' "/home/siddhesh/Desktop/online judge/online_judge/secondary_backend/venv/bin/python" "$0" "$@"
 ' '''
 # -*- coding: utf-8 -*-
 import re

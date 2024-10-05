@@ -14,7 +14,7 @@ const runSubmitProblem = async (req, res) => {
     let submission = null;
     try {
         // Create an entry in the database
-        submission = new Submission({
+        submission = new Submission({   
             problem_id: problem_id,
             user_id: user.user_id,
             code,
@@ -32,7 +32,7 @@ const runSubmitProblem = async (req, res) => {
         const submissionData = {
             submission_id: submission.submission_id,
             problem_id,
-            user_id : user_id,
+            user_id : user.user_id,
             code,
             language,
             // action,  // 'RUN' or 'SUBMIT'
