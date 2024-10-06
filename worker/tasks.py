@@ -128,7 +128,7 @@ def run_code_in_docker(code, language, submission_id, problem_id, test_case_path
                     }
                 else:
                     error_lines = error_message.split('\n')
-                    relevant_error = '\n'.join(error_lines[-5:])
+                    # relevant_error = '\n'.join(error_lines[-5:])
                     return {
                         "status": "runtime_error",
                         "message": f"Runtime error occurred on testcase {i}",
