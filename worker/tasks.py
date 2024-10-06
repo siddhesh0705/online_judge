@@ -93,13 +93,14 @@ def run_code_in_docker(code, language, submission_id, problem_id, test_case_path
                 formatted_error = '\n'.join(relevant_errors)
                 return {
                     "status": "compilation_error",
-                    "message": f"Compilation failed.\n{formatted_error}"
+                    "message": f"Compilation failed.",
+                    "results": f"{formatted_error}"
                 }
-
+        final_correct_result = ""
         for i in range(len(test_case_paths)):
             run_result = subprocess.run(
                 f"docker run --rm --memory=256m --cpus=1 -v {work_dir}:/app -w /app {image} "
-                f"sh -c 'timeout {timeout}s {run_cmd} < inputs/in{i}.txt > outputs/output_{i}.txt 2>&1'",
+                f"sh -c 'timeout {timeout}s {run_cmd} < inputs/in{i}.txt | tee outputs/output_{i}.txt'",
                 shell=True, capture_output=True, text=True
             )
 
@@ -136,18 +137,21 @@ def run_code_in_docker(code, language, submission_id, problem_id, test_case_path
             with open(os.path.join(output_dir, f"output_{i}.txt"), "r") as f_output, \
                  open(os.path.join(expected_output_dir, f"out{i}.txt"), "r") as f_expected:
                 if f_output.read().strip() != f_expected.read().strip():
-                    return {"status": "wrong_answer", "message": f"Failed on testcase {i}."}
+                    return {"status": "wrong_answer", "message": f"Failed on testcase {i}.", "results": run_result.stdout}
 
+            final_correct_result = run_result.stdout
+
+        results['results'] = final_correct_result
         return results
     except Exception as e:
         print("Error in running in docker", e)
-        return {"status": "pending", "message": str(e)}
+        return {"status": "pending", "message": "Unexpected error occurred", "results": str(e)}
     finally:
         if os.path.exists(work_dir):
             subprocess.run(f"rm -rf {work_dir}", shell=True)
 
 @app.task
-def execute_program(submission):
+def execute_program_submit(submission):
     try:
         test_case_paths = [f"../problems/{submission['problem_id']}/in{i}.txt" for i in range(6)]
         expected_output_paths = [f"../problems/{submission['problem_id']}/out{i}.txt" for i in range(6)]
@@ -164,7 +168,35 @@ def execute_program(submission):
         # print(f"Program ran in Docker successfully with result : {results}")
 
         submission['status'] = results['status']
-        submission['results'] = results['message']
+        submission['message'] = results['message']
+        submission['results'] = ''
+
+        return submission
+    except Exception as e:
+        print(f"Error executing the task: {e}")
+        return None
+
+
+@app.task
+def execute_program_run(submission):
+    try:
+        test_case_paths = [f"../problems/{submission['problem_id']}/in0.txt"]
+        expected_output_paths = [f"../problems/{submission['problem_id']}/out0.txt"]
+
+        results = run_code_in_docker(
+            submission['code'],
+            submission['language'],
+            submission['submission_id'],
+            submission['problem_id'],
+            test_case_paths,
+            expected_output_paths
+        )
+
+        # print(f"Program ran in Docker successfully with result : {results}")
+
+        submission['status'] = results['status']
+        submission['message'] = results['message']
+        submission['results'] = results['results']
 
         return submission
     except Exception as e:
@@ -204,10 +236,12 @@ def process_queue(queue_name = SUBMIT_QUEUE):
         # Convert bytes to string
         submission['code'] = decoded_bytes.decode('utf-8')
 
-        result = execute_program(submission)
+        if queue_name == 'submitQueue':
+            result = execute_program_submit(submission)
+        else:
+            result = execute_program_run(submission)
 
         print(f"Program executed successfully with result : {result}")
-
         
         if result:
             submission_result = {
@@ -215,6 +249,7 @@ def process_queue(queue_name = SUBMIT_QUEUE):
                 "problem_id": result['problem_id'],
                 "user_id": result['user_id'],
                 "results": result['results'],
+                "message": result['message'],
                 "status": result['status']
             }
             
@@ -227,11 +262,11 @@ def process_queue(queue_name = SUBMIT_QUEUE):
         print(f"Error in process_queue: {e}")
 
 app.conf.beat_schedule = {
-    # 'process-run-queue': {
-    #     'task': 'tasks.process_queue',
-    #     'schedule': timedelta(seconds=1),
-    #     'args': (RUN_QUEUE,)
-    # },
+    'process-run-queue': {
+        'task': 'tasks.process_queue',
+        'schedule': timedelta(seconds=1),
+        'args': (RUN_QUEUE,)
+    },
     'process-submit-queue': {
         'task': 'tasks.process_queue',
         'schedule': timedelta(seconds=1),
