@@ -6,14 +6,16 @@ from celery import Celery, shared_task
 from celery.schedules import timedelta
 from redis import Redis
 from dotenv import load_dotenv
+import base64
+import re
 
 load_dotenv(".env")
 # Redis configuration
 REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
 REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
 REDIS_DB = int(os.getenv('REDIS_DB', 0))
-RUN_QUEUE = 'runQueue'
-SUBMIT_QUEUE = 'submitQueue'
+RUN_QUEUE = os.getenv('RUN_QUEUE', 'runQueue')
+SUBMIT_QUEUE = os.getenv('SUBMIT_QUEUE', 'submitQueue')
 
 # Webhook configuration
 WEB_HOOK_URL = os.getenv('WEB_HOOK_URL', "http://localhost:3000/api/webhook")
@@ -27,6 +29,7 @@ app.conf.broker_connection_retry_on_startup = True
 
 # Redis client
 redis_client = Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
+
 
 def run_code_in_docker(code, language, submission_id, problem_id, test_case_paths, expected_output_paths):
     try:
@@ -49,11 +52,16 @@ def run_code_in_docker(code, language, submission_id, problem_id, test_case_path
             run_cmd = f"./{filename}_exec"
             timeout = 2
         elif language == "java":
-            filename += ".java"
+            filename = "Main.java"
             image = "openjdk:11-jdk-slim"
             compile_cmd = f"javac {filename}"
             run_cmd = f"java {filename[:-5]}"
             timeout = 2
+        elif language == "javascript":
+            filename += ".js"
+            image = "node:14-slim"
+            run_cmd = f"node {filename}"
+            timeout = 4
         else:
             return {"status": "failed", "message": "Unsupported programming language"}
 
@@ -69,22 +77,9 @@ def run_code_in_docker(code, language, submission_id, problem_id, test_case_path
         with open(os.path.join(work_dir, filename), "w") as f:
             f.write(code)
 
-        for test_case, expected_output in zip(test_case_paths, expected_output_paths):
-            # input_file = os.path.join(input_dir, f"input_{i}.txt")
-            # output_file = os.path.join(output_dir, f"output_{i}.txt")
-            # expected_file = os.path.join(expected_output_dir, f"expected_{i}.txt")
-
-            subprocess.run(f"cp {test_case} {input_dir}", shell=True)
-
-            subprocess.run(f"cp {expected_output} {expected_output_dir}", shell=True)
-            
-            # # File should be copied MAYBE instead of writing entire file again
-            # with open(test_case, "r") as src, open(input_file, "w") as dest:
-            #     dest.write(src.read())
-
-            # # File should be copied MAYBE instead of writing entire file again
-            # with open(expected_output, "r") as src, open(expected_file, "w") as dest:
-            #     dest.write(src.read())
+        for i, (test_case, expected_output) in enumerate(zip(test_case_paths, expected_output_paths)):
+            subprocess.run(f"cp {test_case} {os.path.join(input_dir, f'in{i}.txt')}", shell=True)
+            subprocess.run(f"cp {expected_output} {os.path.join(expected_output_dir, f'out{i}.txt')}", shell=True)
 
         if language in ["cpp", "c++", "java"]:
             compile_result = subprocess.run(
@@ -92,7 +87,14 @@ def run_code_in_docker(code, language, submission_id, problem_id, test_case_path
                 shell=True, capture_output=True, text=True
             )
             if compile_result.returncode != 0:
-                return {"status": "compilation_error", "message": compile_result.stderr}
+                error_message = compile_result.stderr
+                error_lines = error_message.split('\n')
+                relevant_errors = [line for line in error_lines if re.search(r'error|warning', line)]
+                formatted_error = '\n'.join(relevant_errors)
+                return {
+                    "status": "compilation_error",
+                    "message": f"Compilation failed.\n{formatted_error}"
+                }
 
         for i in range(len(test_case_paths)):
             run_result = subprocess.run(
@@ -102,9 +104,34 @@ def run_code_in_docker(code, language, submission_id, problem_id, test_case_path
             )
 
             if run_result.returncode == 124:
-                return {"status": "time_limit_exceeded", "message": f"Execution time exceeded {timeout} seconds on testcase {i}."}
+                return {
+                    "status": "time_limit_exceeded",
+                    "message": f"Execution time exceeded {timeout} seconds on testcase {i}."
+                }
             elif run_result.returncode != 0:
-                return {"status": "runtime_error", "message": run_result.stderr}
+                error_message = run_result.stderr
+                if "Segmentation fault" in error_message:
+                    return {
+                        "status": "runtime_error",
+                        "message": f"Segmentation fault occurred on testcase {i}. This typically indicates accessing memory that does not belong to your program."
+                    }
+                elif "std::bad_alloc" in error_message:
+                    return {
+                        "status": "runtime_error",
+                        "message": f"Memory allocation failed on testcase {i}. This usually means your program is trying to use more memory than available."
+                    }
+                elif language == "javascript" and "RangeError: Maximum call stack size exceeded" in error_message:
+                    return {
+                        "status": "runtime_error",
+                        "message": f"Stack overflow error occurred on testcase {i}. This usually indicates infinite recursion or excessive function calls."
+                    }
+                else:
+                    error_lines = error_message.split('\n')
+                    relevant_error = '\n'.join(error_lines[-5:])
+                    return {
+                        "status": "runtime_error",
+                        "message": f"Runtime error occurred on testcase {i}",
+                    }
 
             with open(os.path.join(output_dir, f"output_{i}.txt"), "r") as f_output, \
                  open(os.path.join(expected_output_dir, f"out{i}.txt"), "r") as f_expected:
@@ -114,7 +141,7 @@ def run_code_in_docker(code, language, submission_id, problem_id, test_case_path
         return results
     except Exception as e:
         print("Error in running in docker", e)
-        return {"status": "internal_error", "message": str(e)}
+        return {"status": "pending", "message": str(e)}
     finally:
         if os.path.exists(work_dir):
             subprocess.run(f"rm -rf {work_dir}", shell=True)
@@ -137,12 +164,13 @@ def execute_program(submission):
         # print(f"Program ran in Docker successfully with result : {results}")
 
         submission['status'] = results['status']
-        submission['results'] = results["message"]
+        submission['results'] = results['message']
 
         return submission
     except Exception as e:
         print(f"Error executing the task: {e}")
         return None
+
 
 @shared_task
 def send_result_to_webhook(result):
@@ -155,14 +183,10 @@ def send_result_to_webhook(result):
         print(f"Error sending result to webhook: {e}")
     except Exception as e:
         print(f"DONT KNOW WHAT ERROR: {e}")
-# @app.task
-# def send_result_to_webhook(result):
-#     with httpx.AsyncClient() as client:
-#         response = client.post(WEB_HOOK_URL, json =result)
-#     return response
+
 
 @app.task
-def process_queue(queue_name):
+def process_queue(queue_name = SUBMIT_QUEUE):
     try:
         item = redis_client.brpop(queue_name, timeout=1)
         
@@ -174,7 +198,12 @@ def process_queue(queue_name):
 
         _, value = item
         submission = json.loads(value)
-        
+
+        # Decode from base64
+        decoded_bytes = base64.b64decode(submission['code'])
+        # Convert bytes to string
+        submission['code'] = decoded_bytes.decode('utf-8')
+
         result = execute_program(submission)
 
         print(f"Program executed successfully with result : {result}")
@@ -189,25 +218,24 @@ def process_queue(queue_name):
                 "status": result['status']
             }
             
-            print("Sending result to webhook...................................")
             send_result_to_webhook(submission_result)
-            print("Result sent!!!!!!!!!!!!!!!!!1")
-
+        else:
+            print("Error sending execution result to primary backend via webhook")
     except json.JSONDecodeError as e:
         print(f"Error decoding JSON: {e}")
     except Exception as e:
         print(f"Error in process_queue: {e}")
 
 app.conf.beat_schedule = {
-    'process-run-queue': {
-        'task': 'tasks.process_queue',
-        'schedule': timedelta(seconds=1),
-        'args': (RUN_QUEUE,)
-    },
+    # 'process-run-queue': {
+    #     'task': 'tasks.process_queue',
+    #     'schedule': timedelta(seconds=1),
+    #     'args': (RUN_QUEUE,)
+    # },
     'process-submit-queue': {
         'task': 'tasks.process_queue',
         'schedule': timedelta(seconds=1),
-        'args': (SUBMIT_QUEUE,)
+        'args': ('submitQueue',)
     }
 }
 
